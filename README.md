@@ -1,63 +1,225 @@
-# CodeIgniter 4 Application Starter
+PHP Parser
+==========
 
-## What is CodeIgniter?
+[![Coverage Status](https://coveralls.io/repos/github/nikic/PHP-Parser/badge.svg?branch=master)](https://coveralls.io/github/nikic/PHP-Parser?branch=master)
 
-CodeIgniter is a PHP full-stack web framework that is light, fast, flexible and secure.
-More information can be found at the [official site](http://codeigniter.com).
+This is a PHP 5.2 to PHP 8.1 parser written in PHP. Its purpose is to simplify static code analysis and
+manipulation.
 
-This repository holds a composer-installable app starter.
-It has been built from the
-[development repository](https://github.com/codeigniter4/CodeIgniter4).
+[**Documentation for version 4.x**][doc_master] (stable; for running on PHP >= 7.0; for parsing PHP 5.2 to PHP 8.1).
 
-More information about the plans for version 4 can be found in [the announcement](http://forum.codeigniter.com/thread-62615.html) on the forums.
+[Documentation for version 3.x][doc_3_x] (unsupported; for running on PHP >= 5.5; for parsing PHP 5.2 to PHP 7.2).
 
-The user guide corresponding to this version of the framework can be found
-[here](https://codeigniter4.github.io/userguide/).
+Features
+--------
 
-## Installation & updates
+The main features provided by this library are:
 
-`composer create-project codeigniter4/appstarter` then `composer update` whenever
-there is a new release of the framework.
+ * Parsing PHP 5, PHP 7, and PHP 8 code into an abstract syntax tree (AST).
+   * Invalid code can be parsed into a partial AST.
+   * The AST contains accurate location information.
+ * Dumping the AST in human-readable form.
+ * Converting an AST back to PHP code.
+   * Experimental: Formatting can be preserved for partially changed ASTs.
+ * Infrastructure to traverse and modify ASTs.
+ * Resolution of namespaced names.
+ * Evaluation of constant expressions.
+ * Builders to simplify AST construction for code generation.
+ * Converting an AST into JSON and back.
 
-When updating, check the release notes to see if there are any changes you might need to apply
-to your `app` folder. The affected files can be copied or merged from
-`vendor/codeigniter4/framework/app`.
+Quick Start
+-----------
 
-## Setup
+Install the library using [composer](https://getcomposer.org):
 
-Copy `env` to `.env` and tailor for your app, specifically the baseURL
-and any database settings.
+    php composer.phar require nikic/php-parser
 
-## Important Change with index.php
+Parse some PHP code into an AST and dump the result in human-readable form:
 
-`index.php` is no longer in the root of the project! It has been moved inside the *public* folder,
-for better security and separation of components.
+```php
+<?php
+use PhpParser\Error;
+use PhpParser\NodeDumper;
+use PhpParser\ParserFactory;
 
-This means that you should configure your web server to "point" to your project's *public* folder, and
-not to the project root. A better practice would be to configure a virtual host to point there. A poor practice would be to point your web server to the project root and expect to enter *public/...*, as the rest of your logic and the
-framework are exposed.
+$code = <<<'CODE'
+<?php
 
-**Please** read the user guide for a better explanation of how CI4 works!
+function test($foo)
+{
+    var_dump($foo);
+}
+CODE;
 
-## Repository Management
+$parser = (new ParserFactory)->create(ParserFactory::PREFER_PHP7);
+try {
+    $ast = $parser->parse($code);
+} catch (Error $error) {
+    echo "Parse error: {$error->getMessage()}\n";
+    return;
+}
 
-We use GitHub issues, in our main repository, to track **BUGS** and to track approved **DEVELOPMENT** work packages.
-We use our [forum](http://forum.codeigniter.com) to provide SUPPORT and to discuss
-FEATURE REQUESTS.
+$dumper = new NodeDumper;
+echo $dumper->dump($ast) . "\n";
+```
 
-This repository is a "distribution" one, built by our release preparation script.
-Problems with it can be raised on our forum, or as issues in the main repository.
+This dumps an AST looking something like this:
 
-## Server Requirements
+```
+array(
+    0: Stmt_Function(
+        byRef: false
+        name: Identifier(
+            name: test
+        )
+        params: array(
+            0: Param(
+                type: null
+                byRef: false
+                variadic: false
+                var: Expr_Variable(
+                    name: foo
+                )
+                default: null
+            )
+        )
+        returnType: null
+        stmts: array(
+            0: Stmt_Expression(
+                expr: Expr_FuncCall(
+                    name: Name(
+                        parts: array(
+                            0: var_dump
+                        )
+                    )
+                    args: array(
+                        0: Arg(
+                            value: Expr_Variable(
+                                name: foo
+                            )
+                            byRef: false
+                            unpack: false
+                        )
+                    )
+                )
+            )
+        )
+    )
+)
+```
 
-PHP version 7.4 or higher is required, with the following extensions installed:
+Let's traverse the AST and perform some kind of modification. For example, drop all function bodies:
 
-- [intl](http://php.net/manual/en/intl.requirements.php)
-- [libcurl](http://php.net/manual/en/curl.requirements.php) if you plan to use the HTTP\CURLRequest library
+```php
+use PhpParser\Node;
+use PhpParser\Node\Stmt\Function_;
+use PhpParser\NodeTraverser;
+use PhpParser\NodeVisitorAbstract;
 
-Additionally, make sure that the following extensions are enabled in your PHP:
+$traverser = new NodeTraverser();
+$traverser->addVisitor(new class extends NodeVisitorAbstract {
+    public function enterNode(Node $node) {
+        if ($node instanceof Function_) {
+            // Clean out the function body
+            $node->stmts = [];
+        }
+    }
+});
 
-- json (enabled by default - don't turn it off)
-- [mbstring](http://php.net/manual/en/mbstring.installation.php)
-- [mysqlnd](http://php.net/manual/en/mysqlnd.install.php)
-- xml (enabled by default - don't turn it off)
+$ast = $traverser->traverse($ast);
+echo $dumper->dump($ast) . "\n";
+```
+
+This gives us an AST where the `Function_::$stmts` are empty:
+
+```
+array(
+    0: Stmt_Function(
+        byRef: false
+        name: Identifier(
+            name: test
+        )
+        params: array(
+            0: Param(
+                type: null
+                byRef: false
+                variadic: false
+                var: Expr_Variable(
+                    name: foo
+                )
+                default: null
+            )
+        )
+        returnType: null
+        stmts: array(
+        )
+    )
+)
+```
+
+Finally, we can convert the new AST back to PHP code:
+
+```php
+use PhpParser\PrettyPrinter;
+
+$prettyPrinter = new PrettyPrinter\Standard;
+echo $prettyPrinter->prettyPrintFile($ast);
+```
+
+This gives us our original code, minus the `var_dump()` call inside the function:
+
+```php
+<?php
+
+function test($foo)
+{
+}
+```
+
+For a more comprehensive introduction, see the documentation.
+
+Documentation
+-------------
+
+ 1. [Introduction](doc/0_Introduction.markdown)
+ 2. [Usage of basic components](doc/2_Usage_of_basic_components.markdown)
+
+Component documentation:
+
+ * [Walking the AST](doc/component/Walking_the_AST.markdown)
+   * Node visitors
+   * Modifying the AST from a visitor
+   * Short-circuiting traversals
+   * Interleaved visitors
+   * Simple node finding API
+   * Parent and sibling references
+ * [Name resolution](doc/component/Name_resolution.markdown)
+   * Name resolver options
+   * Name resolution context
+ * [Pretty printing](doc/component/Pretty_printing.markdown)
+   * Converting AST back to PHP code
+   * Customizing formatting
+   * Formatting-preserving code transformations
+ * [AST builders](doc/component/AST_builders.markdown)
+   * Fluent builders for AST nodes
+ * [Lexer](doc/component/Lexer.markdown)
+   * Lexer options
+   * Token and file positions for nodes
+   * Custom attributes
+ * [Error handling](doc/component/Error_handling.markdown)
+   * Column information for errors
+   * Error recovery (parsing of syntactically incorrect code)
+ * [Constant expression evaluation](doc/component/Constant_expression_evaluation.markdown)
+   * Evaluating constant/property/etc initializers
+   * Handling errors and unsupported expressions
+ * [JSON representation](doc/component/JSON_representation.markdown)
+   * JSON encoding and decoding of ASTs
+ * [Performance](doc/component/Performance.markdown)
+   * Disabling Xdebug
+   * Reusing objects
+   * Garbage collection impact
+ * [Frequently asked questions](doc/component/FAQ.markdown)
+   * Parent and sibling references
+
+ [doc_3_x]: https://github.com/nikic/PHP-Parser/tree/3.x/doc
+ [doc_master]: https://github.com/nikic/PHP-Parser/tree/master/doc
